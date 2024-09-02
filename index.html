@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Puzzle</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:ital,wght@0,100..700;1,100..700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.10.0/p5.min.js"></script>
+</head>
+<body>
+    <div id="bottomUpContainer">
+        <div id="responseArea">
+           
+        </div>
+        <div id="commandInputArea">
+            <label for="commandPrompt"> > </label>
+            <input id="commandPrompt" name="commandPrompt" type="text">
+        </div>
+    </div>
+</body>
+</html>
+<script>
+
+// Globals
+let points = []
+const pointsToMake = 100
+let maxSpeed = 0.25
+let currWidth
+let currHeight
+const pointSizeSeed = 3
+const pointSizeMin = 1
+let maxAccel = 0.05
+let accelChangeRate = 0.01
+let pairID = 0
+let maxConnectionDistance
+const greenBiasCoef = 4
+let blueValue = 0
+let blueIncreasing = true
+const connectionRatio = 7
+const blueChangeRate = 0.2
+const connectionBlueCeil = 9
+const responseShowLength = 12000
+const responseFadeLength = 4000
+const commandSpeed = 10
+let commandHistory = []
+let currentCommand = 0
+let solved = false
+let lineAlpha = 255
+let fadePointsOut = false
+const fadeStep = 0.01
+
+commandsStore = {
+    'add':{
+        'trigger':addNode,
+        'description':' Add nodes to render. Arg1: Optional node quantity'
+    },
+    'collapse':{
+        'trigger':collapsePoints,
+        'description':' Move all points to middle x,y. Arg1: Optional speed paramater'
+    },
+    'expand':{
+        'trigger':expandPoints,
+        'description':' Move all points away from middle x,y. Arg1: Optional speed paramater'
+    },
+    'fast':{
+        'trigger':fastPoints,
+        'description':' Double all node speed. Arg1: Optional speed factor'
+    },
+    'flatten':{
+        'trigger':flattenPoints,
+        'description':' Move all points to middle y'
+    },
+    'help':{
+        'trigger':listCommands,
+        'description':' List all commands'
+    },
+    'hint':{
+        'trigger':showHint,
+        'description':' Forgot login'
+    },
+    'remove':{
+        'trigger':removeNode,
+        'description':' Remove random node. Arg1: Optional node quantity'
+    },
+    'slow':{
+        'trigger':slowPoints,
+        'description':' Cut all node speed in hal. Arg1: Optional speed factor'
+    },
+}
+
+// p5 setup
+function setup() {
+    currWidth = window.innerWidth
+    currHeight = window.innerHeight
+    points = createPointsArray(pointsToMake)
+    maxConnectionDistance = Math.min(window.innerWidth, window.innerHeight)/connectionRatio
+    createCanvas(window.innerWidth, window.innerHeight)
+}
+
+// p5 loop
+function draw() {
+  background(0);
+//   renderPoints(points)
+  movePoints(points)
+  renderConnections(points)
+//   incrementBlue()
+  validateInput(points)
+}
+
+// p5 key press
+function keyPressed() {
+    if (keyCode === ENTER) {
+        const commandPrompt = document.getElementById('commandPrompt')
+        const command = commandPrompt.value
+        commandPrompt.value = ''
+        processCommand(command)
+    }
+    else if (keyCode === UP_ARROW) {
+        if(currentCommand > 0)
+            currentCommand--
+        document.getElementById('commandPrompt').value = commandHistory[currentCommand]
+    } 
+    else if (keyCode === DOWN_ARROW) {
+        if(currentCommand < commandHistory.length-1){
+            currentCommand++
+            document.getElementById('commandPrompt').value = commandHistory[currentCommand]
+        }
+        else if(currentCommand == commandHistory.length-1){
+            currentCommand++
+            document.getElementById('commandPrompt').value = ''
+        }
+    }
+}
+
+function processCommand(command) {
+    commandHistory.push(command)
+    currentCommand = commandHistory.length
+    const commandParts = command.split(/[ ]+/)
+    const commandFunction = commandParts[0]
+    commandParts.shift()
+    const argList = commandParts
+    if(Object.keys(commandsStore).includes(commandFunction)) {
+        addResponse(command)
+        commandsStore[commandFunction].trigger(argList)
+    }
+    else{
+        commandsStore['help'].trigger()
+    }
+}
+
+function listCommands() {
+    addResponse("Command List:")
+    for(const commandName of Object.keys(commandsStore)) {
+        addResponse(commandName + ":" + commandsStore[commandName].description)
+    }
+}
+
+function showHint(argList) {
+    let hintNumber = 0
+    if(argList.length > 0){
+        if(!isNaN( parseInt( argList[0] ) )){
+            hintNumber = parseInt(argList[0])
+        }
+    }
+    if(hintNumber == 0) {
+        addResponse("4 has 1")
+        addResponse("3 has none")
+        addResponse("2 has 1")
+        addResponse("1 has 1")
+    }
+    else if(hintNumber == 1) {
+        addResponse("The sun, there is one")
+    }
+    else if(hintNumber == 2) {
+        addResponse("I am a line that has no start,")
+        addResponse("Yet from myself, I'll never part.")
+    }
+    else if(hintNumber == 3) {
+        addResponse("No end in sight, I always close,")
+        addResponse("A perfect form that nature knows.")
+    }
+}
+
+function addResponse(response) {
+    const responseArea = document.getElementById('responseArea')
+    const responseElement = document.createElement('p')
+    responseElement.textContent = response
+    responseArea.appendChild(responseElement)
+    setTimeout(()=>{
+        fadeOut(responseElement,responseFadeLength)
+        setTimeout(()=>{
+            responseElement.remove()
+        },responseFadeLength)
+    },responseShowLength)
+}
+
+function fadeOut(element, ms) {
+    const refreshRate = 20
+    const opacityStep = refreshRate/ms
+    element.style.opacity = 1
+    let fadeInterval = setInterval(()=>{
+        element.style.opacity = parseFloat(element.style.opacity) - opacityStep
+        if(parseFloat(element.style.opacity) <= 0)
+            clearInterval(fadeInterval)
+    }, refreshRate)
+}
+
+// window resize
+window.addEventListener('resize', resizeCanvas)
+
+function resizeCanvas() {
+    resizeCanvas(window.innerWidth, window.innerHeight)
+    maxConnectionDistance = Math.min(window.innerWidth, window.innerHeight)/5
+    scalePoints()
+}
+
+function scalePoints() {
+    const scaleX = window.innerWidth/currWidth
+    const scaleY = window.innerHeight/currHeight
+    for(const point of points) {
+        point.x *= scaleX
+        point.y *= scaleY
+    }
+    currWidth = window.innerWidth
+    currHeight = window.innerHeight
+}
+
+function createPointsArray(pointsToMake) {
+    let newPoints = []
+    let pointsMade = 0
+    while(pointsMade < pointsToMake) {
+        newPoints.push( createRandomPoint() )
+        pointsMade++
+    }
+    return newPoints
+}
+
+function createRandomPoint() {
+    const speedMod = Math.random() * maxSpeed
+    const speedAngle = Math.random() * 2 * Math.PI
+    const xSpeed = Math.cos(speedAngle) * speedMod
+    const ySpeed = Math.sin(speedAngle) * speedMod
+
+    const accelMod = Math.random() * maxAccel
+    const accelAngle = Math.random() * 2 * Math.PI
+    const xAccel = Math.cos(accelAngle) * accelMod 
+    const yAccel = Math.sin(accelAngle) * accelMod 
+
+    return new Pair(
+        Math.random() * window.innerWidth,
+        Math.random() * window.innerHeight,
+        xSpeed,
+        ySpeed,
+        xAccel,
+        yAccel,
+        (Math.random() * pointSizeSeed) + pointSizeMin 
+    )
+}
+
+function addNode(argList) {
+    let nodesToAdd = 1
+    if(argList.length > 0) {
+        if(!isNaN(parseInt(argList[0])) ) {
+            nodesToAdd = parseInt(argList[0])
+        }
+    }
+    let nodesAdded = 0
+    while(nodesAdded < nodesToAdd) {
+        points.push(createRandomPoint())
+        nodesAdded++
+    }
+}
+
+function removeNode(argList) {
+    let nodesToRemove = 1
+    if(argList.length > 0) {
+        if(!isNaN(parseInt(argList[0])) ) {
+            nodesToRemove = parseInt(argList[0])
+        }
+    }
+    if(nodesToRemove > points.length)
+        nodesToRemove = points.length
+    let nodesRemoved = 0
+    while(nodesRemoved < nodesToRemove) {
+        const startingIndex = parseInt(Math.random() * (points.length/nodesToRemove))
+        const increment = parseInt( Math.random() * (points.length/nodesToRemove))
+        for(i = startingIndex; i < points.length; i+=increment) {
+            points.splice(i, 1)
+            nodesRemoved++
+            if(nodesRemoved >= nodesToRemove) {
+                break
+            }
+        }
+    }
+}
+
+function flattenPoints() {
+    for(const point of points) {
+        point.y = window.innerHeight/2
+    }
+}
+
+function collapsePoints(argList){
+    const centerX = window.innerWidth/2
+    const centerY = window.innerHeight/2
+    const centerPoint = {
+        'x': centerX,
+        'y': centerY
+    }
+    let collapseMaxSpeed = commandSpeed
+    if(argList.length > 0) {
+        if( !isNaN( parseFloat( argList[0] ) ) ) {
+            collapseMaxSpeed = parseFloat(argList[0])
+        }
+    }
+    const maxDistanceToCenter = Math.pow( Math.pow(window.innerWidth/2,2) + Math.pow(window.innerHeight/2,2) ,0.5)
+    for(const point of points) {
+        const angle = angleBetween(point.x, point.y, centerX, centerY)
+        const distanceToCenter = distance(point, centerPoint)
+        const forceCoef = distanceToCenter/maxDistanceToCenter
+        const forceComponent = collapseMaxSpeed * forceCoef
+        point.vx = forceComponent * cos(angle) * -1
+        point.vy = forceComponent * sin(angle) * -1
+    }
+}
+
+function expandPoints(argList) {
+    const centerX = window.innerWidth/2
+    const centerY = window.innerHeight/2
+    const centerPoint = {
+        'x': centerX,
+        'y': centerY
+    }
+    let expandMaxSpeed = commandSpeed
+    if(argList.length > 0) {
+        if( !isNaN( parseFloat( argList[0] ) ) ) {
+            expandMaxSpeed = parseFloat(argList[0])
+        }
+    }
+    const maxDistanceToCenter = Math.pow( Math.pow(window.innerWidth/2,2) + Math.pow(window.innerHeight/2,2) ,0.5)
+    for(const point of points) {
+        const angle = angleBetween(point.x, point.y, centerX, centerY)
+        const distanceToCenter = distance(point, centerPoint)
+        const forceCoef = 1 - (distanceToCenter/maxDistanceToCenter)
+        const forceComponent = expandMaxSpeed * forceCoef
+        point.vx = forceComponent * cos(angle)
+        point.vy = forceComponent * sin(angle)
+    }
+}
+
+function angleBetween(ax, ay, bx, by) {
+    let angleBetween = Math.atan( (by-ay)/(bx-ax) )
+    if(ax < bx)
+        angleBetween += Math.PI
+    return angleBetween
+}
+
+function slowPoints(argList) {
+    let slowCoef = 0.5
+
+    if(argList.length > 0){
+        if( !isNaN( parseFloat( argList[0] ) ) ) {
+            slowCoef = 1/parseFloat(argList[0])
+        }
+    }
+    for(const point of points) {
+        point.vx *= slowCoef
+        point.ax *= slowCoef
+        point.vy *= slowCoef
+        point.ay *= slowCoef
+    }
+    accelChangeRate *= slowCoef
+    maxSpeed *= slowCoef
+    maxAccel *= slowCoef
+}
+
+function fastPoints(argList) {
+
+    let fastCoef = 2
+
+    if(argList.length > 0){
+        if( !isNaN( parseFloat( argList[0] ) ) ) {
+            fastCoef = parseFloat(argList[0])
+        }
+    }
+
+    for(const point of points) {
+        point.vx *= fastCoef
+        point.vy *= fastCoef
+    }
+    maxSpeed *= fastCoef
+    maxAccel *= fastCoef
+    accelChangeRate *= fastCoef
+}
+
+function sinPoints() {
+    const middleY = window.innerHeight/2
+    for(const point of points) {
+        const middleYOffest = point.y - middleY
+        point.y = middleY + ( middleYOffest * Math.sin(point.x * 0.01) )
+    }
+}
+
+function renderPoints(points) {
+    for(const point of points) {
+        point.render()
+    }
+}
+
+function movePoints(points) {
+    for(const point of points) {
+        point.move()
+    }
+}
+
+function renderConnections(points) {
+    let connections = {}
+    let connectionID = 0
+    for(const pointA of points) {
+        connections = {}
+        let connectionCount = 0
+        for(const pointB of points) {
+            if(pointA.id == pointB.id)
+                continue
+            const difference = distance(pointA, pointB)
+            if(difference <= maxConnectionDistance){
+                connectionCount++
+                connections[++connectionID] = {
+                    'pointA' : pointA,
+                    'pointB' : pointB,
+                    'difference' : difference
+                }
+            }
+        }
+        for(const c of Object.keys(connections)) {
+            drawConnection(connections[c].pointA, connections[c].pointB, connections[c].difference, connectionCount)
+        }
+    }
+}
+
+function drawConnection(pointA, pointB, difference, connectionCount) {
+    strokeWeight(Math.min(pointA.size, pointB.size))
+    const distanceCoef = difference/maxConnectionDistance
+    let lineRed = Math.pow(distanceCoef,greenBiasCoef) * 255
+    let lineGreen = (1 - Math.pow(distanceCoef,greenBiasCoef)) * 255
+    // const lineBlue = 70
+    // const lineBlue = blueValue
+    // const lineBlue = Math.min(1, connectionCount/connectionBlueCeil) * 255
+    let lineBlue = Math.pow((( Math.max(getSpeed(pointA), getSpeed(pointA)) )/maxSpeed),2) * 255
+    if(solved){
+        lineRed = 66
+        lineGreen = 246
+        lineBlue = 120
+    }
+    let lineColor = color(lineRed, lineGreen, lineBlue, lineAlpha)
+    stroke(lineColor)
+    line(pointA.x, pointA.y, pointB.x, pointB.y)
+    if(fadePointsOut) {
+        lineAlpha -= fadeStep
+    }
+        
+}
+
+function removePoints() {
+    points = []
+}
+
+function getSpeed(point) {
+    return Math.pow(Math.pow(point.vx,2) + Math.pow(point.vy,2),0.5)
+}
+
+function distance(pointA, pointB) {
+    return Math.pow( Math.pow(pointA.y - pointB.y,2) + Math.pow(pointA.x - pointB.x,2) , 0.5)
+}
+
+function incrementBlue() {
+    if(blueIncreasing){
+        if(blueValue < 255)
+            blueValue+=blueChangeRate
+        else{
+            blueIncreasing = false
+            blueValue-=blueChangeRate
+        }
+    }else{
+        if(blueValue > 0)
+            blueValue-=blueChangeRate
+        else{
+            blueIncreasing = true
+            blueValue+=blueChangeRate
+        }
+    }
+}
+
+function validateInput(points) {
+    if(solved)
+        return
+    if(Math.random() > 0.01)
+        return
+    let minRadius = Math.min(window.innerWidth, window.innerHeight)/5
+    const randPoint = points[ parseInt(Math.round(Math.random() * points.length-1)) ]
+    const centerX = window.innerWidth/2
+    const centerY = window.innerHeight/2
+    const centerPoint = {
+        'x': centerX,
+        'y': centerY
+    }
+    const rpRadius = distance(randPoint, centerPoint)
+    if(rpRadius < minRadius)
+        return
+    const bufferRatio = 0.1
+    const buffer = Math.min(window.innerWidth, window.innerHeight) * bufferRatio
+    const maxRadius = rpRadius + (buffer/2)
+    minRadius = rpRadius - (buffer/2)
+    for(const point of points) {
+        const pRadius = distance(point, centerPoint)
+        if(pRadius < minRadius)
+            return
+        if(pRadius > maxRadius)
+            return
+    }
+    solved = true
+    showSolvedMessages()
+}
+
+function showSolvedMessages() {
+    addResponse('Input Valid')
+    setTimeout(()=>{ addResponse('Logging in...') },2000)
+    setTimeout(()=>{ addResponse('Welcome to SBPB systems, Commissioner John') },4000)
+    setTimeout(()=>{ fadePoints() },4000)    
+    setTimeout(()=>{ addResponse('Menu:') },6000)
+    setTimeout(()=>{ addResponse('1 - Public Records') },6000)
+    setTimeout(()=>{ addResponse('2 - Internal Records') },6000)
+    setTimeout(()=>{ addResponse('3 - Crimial Pending') },6000)
+    setTimeout(()=>{ addResponse('4 - Crimial Resolved') },6000)
+    setTimeout(()=>{ addResponse('5 - Crimial Unresolved') },6000)
+    setTimeout(()=>{ removePoints() },8000)    
+}
+
+function fadePoints() {
+    fadePointsOut = true
+}
+
+class Pair {
+    constructor(x, y, vx, vy, ax, ay, size) {
+        this.x = x
+        this.y = y
+        this.vx = vx
+        this.vy = vy
+        this.ax = ax
+        this.ay = ay
+        this.size = size
+        this.id = ++pairID
+    }
+    render() {
+        stroke('white')
+        strokeWeight(this.size)
+        point(this.x, this.y)
+    }
+    move() {
+        this.x += this.vx
+        this.y += this.vy
+        this.vx += this.ax
+        this.vy += this.ay
+        
+        // borders
+        if(this.x < 0){
+            this.x = 0
+            this.vx *= -1
+            this.ax *= -1
+        }
+        else if(this.x > window.innerWidth){
+            this.x = window.innerWidth
+            this.vx *= -1
+            this.ax *= -1
+        }
+        if(this.y < 0){
+            this.y = 0
+            this.vy *= -1
+            this.ay *= -1
+        }
+        else if(this.y > window.innerHeight){
+            this.y = window.innerHeight
+            this.vy *= -1
+            this.ay *= -1
+        }
+
+        // velocity change
+        if( Math.pow(this.vx,2) + Math.pow(this.vy,2) >= Math.pow(maxSpeed, 2) ) {
+            this.vx *= 0.9
+            this.vy *= 0.9
+        }
+        this.vx *= 0.9
+        this.vy *= 0.9
+
+        // acceleration change
+        this.ax += Math.random() * randNeg() * accelChangeRate
+        this.ay += Math.random() * randNeg() * accelChangeRate
+        if( Math.pow(this.ax,2) + Math.pow(this.ay,2) >= Math.pow(maxAccel, 2) ) {
+            this.ax *= 0.9
+            this.ay *= 0.9
+        } 
+    }
+
+}
+
+function randNeg() {
+    if(Math.random() > 0.5) return 1
+    return -1
+}
+
+</script>
+
+<style> 
+*{
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    overflow: hidden;
+    font-family: "Roboto Mono", monospace;
+    font-optical-sizing: auto;
+    font-weight: 300;
+    font-style: normal;
+}
+input {
+  
+    width: 100%;
+    background-color: transparent;
+    border: none;
+    color: #36dd36;
+}
+label {
+    background-color: transparent;
+    width: 2vw;
+    color: #36dd36;
+}
+textarea:focus, input:focus{
+    outline: none;
+}
+#responseArea{
+    color: #36dd36;
+    P {
+        backdrop-filter: blur(3px);
+        width: fit-content;
+    }
+}
+#bottomUpContainer{
+    position: absolute;
+    bottom: 0%;
+    left: 0%;
+    width: 100%;
+    margin-left: 0.5vw;
+}
+#commandInputArea{
+    display: flex;
+    backdrop-filter: blur(2px);
+}
+</style>
