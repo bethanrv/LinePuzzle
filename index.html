@@ -88,6 +88,11 @@ commandsStore = {
         'trigger':slowPoints,
         'description':' Cut all node speed in hal. Arg1: Optional speed factor'
     },
+    'submit':{
+        'trigger':validateInput,
+        'description':' Validate login input.'
+    },
+    
 }
 
 // p5 setup
@@ -106,7 +111,7 @@ function draw() {
   movePoints(points)
   renderConnections(points)
 //   incrementBlue()
-  validateInput(points)
+//   validateInput(points)
 }
 
 // p5 key press
@@ -493,13 +498,16 @@ function incrementBlue() {
     }
 }
 
-function validateInput(points) {
+function validateInput() {
     if(solved)
         return
-    if(Math.random() > 0.01)
-        return
+    // if(Math.random() > 0.01)
+    //     return
     let minRadius = Math.min(window.innerWidth, window.innerHeight)/5
-    const randPoint = points[ parseInt(Math.round(Math.random() * points.length-1)) ]
+    const randIndex = parseInt(Math.round(Math.random() * points.length-1))
+    const randPoint = points[ randIndex ]
+    if(randPoint == undefined)
+        return
     const centerX = window.innerWidth/2
     const centerY = window.innerHeight/2
     const centerPoint = {
@@ -507,18 +515,21 @@ function validateInput(points) {
         'y': centerY
     }
     const rpRadius = distance(randPoint, centerPoint)
-    if(rpRadius < minRadius)
+    if(rpRadius < minRadius){
         return
+    }
     const bufferRatio = 0.1
     const buffer = Math.min(window.innerWidth, window.innerHeight) * bufferRatio
     const maxRadius = rpRadius + (buffer/2)
     minRadius = rpRadius - (buffer/2)
     for(const point of points) {
         const pRadius = distance(point, centerPoint)
-        if(pRadius < minRadius)
+        if(pRadius < minRadius){
             return
-        if(pRadius > maxRadius)
+        }
+        if(pRadius > maxRadius){
             return
+        }
     }
     solved = true
     showSolvedMessages()
